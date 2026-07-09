@@ -5,10 +5,16 @@
   "description": "Generate CueiT offline registration (.csr) files",
   "main": ".vite/build/main.js",
   "private": true,
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "start": "electron-forge start",
     "package": "electron-forge package",
+    "package:win": "electron-forge package --platform=win32 --arch=x64",
     "make": "electron-forge make",
+    "make:win": "electron-forge make --platform=win32 --arch=x64",
+    "make:win:debug": "set DEBUG=electron-forge:* electron-packager&& electron-forge make --platform=win32 --arch=x64",
     "publish": "electron-forge publish",
     "lint": "echo \"No linting configured\""
   },

@@ -11,6 +11,7 @@ module.exports = {
   makers: [
     {
       name: '@electron-forge/maker-squirrel',
+      platforms: ['win32'],
       config: {
         setupIcon: './src/assets/icons/icon.ico',
       },
