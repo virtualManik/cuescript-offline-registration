@@ -16,6 +16,7 @@
     "make:win": "electron-forge make --platform=win32 --arch=x64",
     "make:win:debug": "set DEBUG=electron-forge:* electron-packager&& electron-forge make --platform=win32 --arch=x64",
     "publish": "electron-forge publish",
+    "test": "node --test",
     "lint": "echo \"No linting configured\""
   },
   "keywords": [],

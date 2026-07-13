@@ -3,13 +3,13 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import started from 'electron-squirrel-startup';
+import { REGISTRATION_URL, lookupRegistration } from './lib/registration.mjs';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
   app.quit();
 }
 
-const REGISTRATION_URL = 'https://www.cuescript.tv/catalog/software_registration_successful.php';
 const DECRYPTION_KEY = Buffer.from('0-3.4=q!Yg#{oWo:8)evq(zh9<^qBi6r', 'binary');
 
 const decryptRegistration = (body) => {
@@ -19,7 +19,53 @@ const decryptRegistration = (body) => {
   return JSON.parse(content);
 };
 
-ipcMain.handle('register', async (_event, { serial, email, renew }) => {
+const firstDefined = (source, keys) => {
+  for (const key of keys) {
+    if (source && source[key] !== undefined && source[key] !== null) {
+      return source[key];
+    }
+  }
+  return undefined;
+};
+
+const normalizeRegistrationInfo = (info) => ({
+  serial: info.serial,
+  flavor: info.flavor,
+  addons: info.addons,
+  regEndDate: info.regEndDate,
+  demo: firstDefined(info, ['demo', 'isDemo', 'trial', 'isTrial', 'demoMode']),
+  licenseType: firstDefined(info, ['licenseType', 'type', 'licenseStatus', 'status']),
+  addonDetails: firstDefined(info, [
+    'addonDetails',
+    'addonsDetails',
+    'addonInfo',
+    'addonsInfo',
+    'addonLicenses',
+    'addonsLicenses',
+    'licenses',
+    'modules',
+  ]),
+  addonExpirations: firstDefined(info, [
+    'addonExpirations',
+    'addonsExpirations',
+    'addonExpiration',
+    'addonsExpiration',
+    'addonExpiry',
+    'addonsExpiry',
+    'addonEndDates',
+    'addonsEndDates',
+  ]),
+  addonDemos: firstDefined(info, [
+    'addonDemos',
+    'addonsDemos',
+    'addonDemo',
+    'addonsDemo',
+    'addonTrials',
+    'addonsTrials',
+  ]),
+});
+
+const generateRegistration = async ({ serial, email, renew = false }) => {
   if (typeof serial !== 'string' || serial.length !== 10) {
     return { ok: false, error: 'Serial number must be exactly 10 characters.' };
   }
@@ -27,7 +73,9 @@ ipcMain.handle('register', async (_event, { serial, email, renew }) => {
   const formData = new FormData();
   formData.append('manualRegister', 'CueiT');
   formData.append('serial', serial);
-  formData.append('email', email);
+  if (typeof email === 'string' && email.trim()) {
+    formData.append('email', email.trim());
+  }
   formData.append('renew', renew ? 'true' : 'false');
 
   let body;
@@ -46,12 +94,7 @@ ipcMain.handle('register', async (_event, { serial, email, renew }) => {
     return {
       ok: true,
       raw: body,
-      info: {
-        serial: info.serial,
-        flavor: info.flavor,
-        addons: info.addons,
-        regEndDate: info.regEndDate,
-      },
+      info: normalizeRegistrationInfo(info),
     };
   } catch {
     // The server responds with a plain-text message (not encrypted data) for
@@ -64,6 +107,18 @@ ipcMain.handle('register', async (_event, { serial, email, renew }) => {
         : 'The server response could not be read as registration data.',
     };
   }
+};
+
+ipcMain.handle('lookup-registration', async (_event, { serial }) => {
+  return lookupRegistration(serial);
+});
+
+ipcMain.handle('generate-registration', async (_event, { serial, email, renew }) => {
+  if (typeof email !== 'string' || !email.trim()) {
+    return { ok: false, error: 'Customer email is required to generate an offline registration file.' };
+  }
+
+  return generateRegistration({ serial, email, renew });
 });
 
 ipcMain.handle('save-registration', async (event, { serial, raw }) => {

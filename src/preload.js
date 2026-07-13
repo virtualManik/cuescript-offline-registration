@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
-  register: (payload) => ipcRenderer.invoke('register', payload),
+  lookupRegistration: (payload) => ipcRenderer.invoke('lookup-registration', payload),
+  generateRegistration: (payload) => ipcRenderer.invoke('generate-registration', payload),
   saveRegistration: (payload) => ipcRenderer.invoke('save-registration', payload),
 });
