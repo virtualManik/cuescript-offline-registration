@@ -47,6 +47,14 @@ test('parses the lookup response and add-on details', () => {
   });
 });
 
+test('calculates the registration expiration from activation date and term days', () => {
+  const response = VALID_RESPONSE
+    .replace('[licences_renewal_date] => 0000-00-00', '[licences_renewal_date] => 2031-07-14')
+    .replace('[licences_term_in_days] => 9999996', '[licences_term_in_days] => 30');
+
+  assert.equal(parseRegistrationLookupResponse(response).regEndDate, '2026-04-23');
+});
+
 test('parses add-ons when the PHP array is returned on one line', () => {
   const info = parseRegistrationLookupResponse(SINGLE_LINE_RESPONSE);
 
@@ -59,6 +67,19 @@ test('parses add-ons when the PHP array is returned on one line', () => {
     { name: 'cueme3', demo: false, expiration: null },
     { name: 'voice', demo: true, expiration: '2053-08-08' },
   ]);
+});
+
+test('treats null add-on options as no add-ons', () => {
+  const response = VALID_RESPONSE.replace(
+    /\[licences_addon_options\] => .+/,
+    '[licences_addon_options] => null',
+  );
+  const info = parseRegistrationLookupResponse(response);
+
+  assert.equal(info.serial, '6396543855');
+  assert.equal(info.flavor, 'news');
+  assert.equal(info.addons, '');
+  assert.deepEqual(info.addonDetails, []);
 });
 
 test('lookup uses GET query parameters and reports endpoint errors', async () => {

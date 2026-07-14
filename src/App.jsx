@@ -320,7 +320,6 @@ export default function App() {
     setGenerateLoading(false);
     if (response.ok) {
       setRegistration(response);
-      setResult(response);
     } else {
       setGenerateError(response.error);
     }

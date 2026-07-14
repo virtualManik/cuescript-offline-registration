@@ -15,17 +15,11 @@ const isUsableDate = (value) => {
 };
 
 const calculateExpiration = (record) => {
-  const renewalDate = record.licences_renewal_date;
-  if (isUsableDate(renewalDate)) return renewalDate;
-
+  const startDate = record.licences_initial_activation_date;
   const termDays = Number.parseInt(record.licences_term_in_days, 10);
-  if (!Number.isFinite(termDays) || termDays >= LIFETIME_TERM_DAYS) return null;
-
-  const startDate = [
-    record.licences_initial_activation_date,
-    record.licences_purchase_date,
-  ].find(isUsableDate);
-  if (!startDate) return null;
+  if (!isUsableDate(startDate) || !Number.isFinite(termDays) || termDays >= LIFETIME_TERM_DAYS) {
+    return null;
+  }
 
   const expiration = new Date(`${startDate}T00:00:00Z`);
   expiration.setUTCDate(expiration.getUTCDate() + termDays);
@@ -66,6 +60,10 @@ const parseAddons = (rawOptions) => {
   try {
     options = JSON.parse(rawOptions);
   } catch {
+    return [];
+  }
+
+  if (options === null || typeof options !== 'object' || Array.isArray(options)) {
     return [];
   }
 
