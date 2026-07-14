@@ -1,7 +1,7 @@
 {
   "name": "cuescript-offline-registration",
   "productName": "CueScript Offline Registration",
-  "version": "1.0.0",
+  "version": "1.5.1",
   "description": "Generate CueiT offline registration (.csr) files",
   "main": ".vite/build/main.js",
   "private": true,
