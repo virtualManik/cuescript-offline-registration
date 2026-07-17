@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, nativeImage, clipboard } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
@@ -141,6 +141,19 @@ ipcMain.handle('save-registration', async (event, { serial, raw }) => {
   }
 });
 
+ipcMain.handle('copy-to-clipboard', (_event, text) => {
+  if (typeof text !== 'string' || !text) {
+    return { ok: false };
+  }
+
+  try {
+    clipboard.writeText(text);
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+});
+
 const createWindow = () => {
   const mainWindow = new BrowserWindow({
     width: 560,
@@ -148,6 +161,7 @@ const createWindow = () => {
     minWidth: 480,
     minHeight: 640,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    autoHideMenuBar: process.platform === 'win32',
     backgroundColor: '#151016',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -162,6 +176,16 @@ const createWindow = () => {
 };
 
 app.whenReady().then(() => {
+  // The packaged app gets its icon from icon.icns; in dev the dock needs it set explicitly.
+  if (process.platform === 'darwin' && !app.isPackaged) {
+    const dockIcon = nativeImage.createFromPath(
+      path.join(app.getAppPath(), 'src/assets/icons/512x512.png')
+    );
+    if (!dockIcon.isEmpty()) {
+      app.dock.setIcon(dockIcon);
+    }
+  }
+
   createWindow();
 
   app.on('activate', () => {

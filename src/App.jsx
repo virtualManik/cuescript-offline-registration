@@ -13,6 +13,8 @@ import {
   CalendarClock,
   Mail,
 } from 'lucide-react';
+import MdiIcon from '@mdi/react';
+import { mdiContentCopy } from '@mdi/js';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -248,14 +250,29 @@ function formatRegistrationExpiration(value) {
   };
 }
 
-function ResultRow({ icon: Icon, label, children }) {
+function ResultRow({ icon: Icon, label, children, copyValue, copied, onCopy }) {
+  const canCopy = typeof copyValue === 'string' && copyValue.length > 0;
+
   return (
     <div className="flex items-center justify-between gap-4 py-3">
       <div className="flex shrink-0 items-center gap-2.5 text-sm text-muted-foreground">
         <Icon className="size-4" />
         {label}
       </div>
-      <div className="min-w-0 flex-1 text-sm font-medium text-right">{children}</div>
+      <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+        <div className="min-w-0 text-right text-sm font-medium">{children}</div>
+        {canCopy && (
+          <button
+            type="button"
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={`Copy ${label}`}
+            title={`Copy ${label}`}
+            onClick={() => onCopy(copyValue)}
+          >
+            {copied ? <CircleCheck className="size-4 text-success" /> : <MdiIcon path={mdiContentCopy} size={0.75} />}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -273,6 +290,12 @@ export default function App() {
   const [savedPath, setSavedPath] = React.useState(null);
   const [saveError, setSaveError] = React.useState(null);
   const [generateError, setGenerateError] = React.useState(null);
+  const [copiedKeys, setCopiedKeys] = React.useState(() => new Set());
+  const copiedTimers = React.useRef(new Map());
+
+  React.useEffect(() => () => {
+    copiedTimers.current.forEach((timer) => clearTimeout(timer));
+  }, []);
 
   const serialValid = serial.length === 10;
   const emailValid = EMAIL_PATTERN.test(email);
@@ -348,11 +371,58 @@ export default function App() {
     setGenerateError(null);
     setShowGenerate(false);
     setRenew(false);
+    copiedTimers.current.forEach((timer) => clearTimeout(timer));
+    copiedTimers.current.clear();
+    setCopiedKeys(new Set());
   };
 
   const expiration = result ? formatRegistrationExpiration(result.info.regEndDate) : null;
   const licenseDemo = result ? detectDemoFromFields(result.info, LICENSE_DEMO_FIELDS) === true : false;
   const addons = result ? parseAddons(result.info) : [];
+  const formatAddonsForClipboard = (items) => items.map((addon) => {
+    const license = addon.demo === null ? null : (addon.demo ? 'Demo' : 'Licensed');
+    const expiry = addon.formattedExpiration?.label ?? 'No expiry';
+    return [addon.name, license, `Expires: ${expiry}`].filter(Boolean).join(' — ');
+  }).join('; ');
+  const addonCopyValue = formatAddonsForClipboard(addons);
+  const initialActivation = result ? formatDate(result.info.initialActivationDate)?.label : null;
+  const renewal = result ? formatDate(result.info.renewalDate)?.label : null;
+
+  const copyText = async (key, text) => {
+    let response;
+    try {
+      response = await window.api.copyToClipboard(text);
+    } catch {
+      return;
+    }
+    if (!response.ok) return;
+
+    const existingTimer = copiedTimers.current.get(key);
+    if (existingTimer) clearTimeout(existingTimer);
+
+    setCopiedKeys((currentKeys) => new Set(currentKeys).add(key));
+    const timer = setTimeout(() => {
+      setCopiedKeys((currentKeys) => {
+        const nextKeys = new Set(currentKeys);
+        nextKeys.delete(key);
+        return nextKeys;
+      });
+      copiedTimers.current.delete(key);
+    }, 2000);
+    copiedTimers.current.set(key, timer);
+  };
+
+  const licenseSummary = result ? [
+    `License Status: ${licenseDemo ? 'Demo' : 'Licensed'}`,
+    `Registration Status: ${expiration?.expired ? 'Expired' : 'Valid'}`,
+    `Serial Number: ${result.info.serial}`,
+    `Flavor: ${String(result.info.flavor ?? '—')}`,
+    `Customer Email: ${result.info.customerEmail ?? '—'}`,
+    `Initial Activation: ${initialActivation ?? '—'}`,
+    `Renewal: ${renewal ?? 'No renewal'}`,
+    `Addons: ${addonCopyValue || 'None'}`,
+    `Expiration: ${expiration?.label ?? '—'}`,
+  ].join('\n') : '';
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -454,21 +524,62 @@ export default function App() {
             </CardHeader>
             <CardContent>
               <div className="divide-y rounded-lg border px-4">
-                <ResultRow icon={Cpu} label="Serial Number">
+                <ResultRow
+                  icon={Cpu}
+                  label="Serial Number"
+                  copyValue={result.info.serial}
+                  copied={copiedKeys.has('serial')}
+                  onCopy={(text) => copyText('serial', text)}
+                >
                   <span className="font-mono">{result.info.serial}</span>
                 </ResultRow>
-                <ResultRow icon={Package} label="Flavor">
+                <ResultRow
+                  icon={Package}
+                  label="Flavor"
+                  copyValue={result.info.flavor === undefined || result.info.flavor === null ? '' : String(result.info.flavor)}
+                  copied={copiedKeys.has('flavor')}
+                  onCopy={(text) => copyText('flavor', text)}
+                >
                   {String(result.info.flavor ?? '—')}
                 </ResultRow>
-                <ResultRow icon={Mail} label="Customer Email">
+                <ResultRow
+                  icon={Mail}
+                  label="Customer Email"
+                  copyValue={result.info.customerEmail ?? ''}
+                  copied={copiedKeys.has('email')}
+                  onCopy={(text) => copyText('email', text)}
+                >
                   {result.info.customerEmail ?? <span className="text-muted-foreground">—</span>}
                 </ResultRow>
-                <ResultRow icon={CalendarClock} label="Initial Activation">
+                <ResultRow
+                  icon={CalendarClock}
+                  label="Initial Activation"
+                  copyValue={initialActivation ?? ''}
+                  copied={copiedKeys.has('initialActivation')}
+                  onCopy={(text) => copyText('initialActivation', text)}
+                >
                   {formatDate(result.info.initialActivationDate)?.label ?? (
                     <span className="text-muted-foreground">—</span>
                   )}
                 </ResultRow>
-                <ResultRow icon={Puzzle} label="Addons">
+                <ResultRow
+                  icon={CalendarClock}
+                  label="Renewal"
+                  copyValue={renewal ?? ''}
+                  copied={copiedKeys.has('renewal')}
+                  onCopy={(text) => copyText('renewal', text)}
+                >
+                  {formatDate(result.info.renewalDate)?.label ?? (
+                    <span className="text-muted-foreground">No renewal</span>
+                  )}
+                </ResultRow>
+                <ResultRow
+                  icon={Puzzle}
+                  label="Addons"
+                  copyValue={addonCopyValue}
+                  copied={copiedKeys.has('addons')}
+                  onCopy={(text) => copyText('addons', text)}
+                >
                   {addons.length > 0 ? (
                     <span className="flex flex-wrap justify-end gap-1.5">
                       {addons.map((addon) => (
@@ -498,7 +609,13 @@ export default function App() {
                     <span className="text-muted-foreground">None</span>
                   )}
                 </ResultRow>
-                <ResultRow icon={CalendarClock} label="Expiration">
+                <ResultRow
+                  icon={CalendarClock}
+                  label="Expiration"
+                  copyValue={expiration?.label === 'No expiration' ? '' : expiration?.label ?? ''}
+                  copied={copiedKeys.has('expiration')}
+                  onCopy={(text) => copyText('expiration', text)}
+                >
                   <span className={expiration?.expired ? 'text-destructive' : undefined}>
                     {expiration?.label}
                   </span>
@@ -506,18 +623,31 @@ export default function App() {
               </div>
 
               {!showGenerate && !registration && (
-                <Button
-                  size="lg"
-                  className="mt-4 w-full"
-                  onClick={() => {
-                    setShowGenerate(true);
-                    setGenerateError(null);
-                    setSaveError(null);
-                  }}
-                >
-                  <Download />
-                  Generate Offline Registration
-                </Button>
+                <div className="mt-4 flex gap-3">
+                  <Button
+                    size="lg"
+                    className="min-w-0 flex-1"
+                    onClick={() => {
+                      setShowGenerate(true);
+                      setGenerateError(null);
+                      setSaveError(null);
+                    }}
+                  >
+                    <Download />
+                    Generate Offline Registration
+                  </Button>
+                  <Button
+                    type="button"
+                    size="lg"
+                    variant="outline"
+                    className="shrink-0"
+                    aria-label="Copy license information"
+                    onClick={() => copyText('licenseSummary', licenseSummary)}
+                  >
+                    {copiedKeys.has('licenseSummary') ? <CircleCheck className="text-success" /> : <MdiIcon path={mdiContentCopy} size={1} />}
+                    Copy License Info
+                  </Button>
+                </div>
               )}
 
               {showGenerate && !registration && (

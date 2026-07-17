@@ -34,6 +34,7 @@ test('parses the lookup response and add-on details', () => {
     flavor: 'news',
     customerEmail: 'customer@example.com',
     initialActivationDate: '2026-03-24',
+    renewalDate: null,
     addons: 'tci, mac, cueme3, voice',
     addonDetails: [
       { name: 'tci', demo: false, expiration: null },
@@ -47,10 +48,22 @@ test('parses the lookup response and add-on details', () => {
   });
 });
 
-test('calculates the registration expiration from activation date and term days', () => {
+test('calculates the registration expiration from renewal date and term days', () => {
   const response = VALID_RESPONSE
     .replace('[licences_renewal_date] => 0000-00-00', '[licences_renewal_date] => 2031-07-14')
     .replace('[licences_term_in_days] => 9999996', '[licences_term_in_days] => 30');
+
+  const info = parseRegistrationLookupResponse(response);
+
+  assert.equal(info.renewalDate, '2031-07-14');
+  assert.equal(info.regEndDate, '2031-08-13');
+});
+
+test('calculates the registration expiration from activation date when there is no renewal', () => {
+  const response = VALID_RESPONSE.replace(
+    '[licences_term_in_days] => 9999996',
+    '[licences_term_in_days] => 30',
+  );
 
   assert.equal(parseRegistrationLookupResponse(response).regEndDate, '2026-04-23');
 });
@@ -61,6 +74,7 @@ test('parses add-ons when the PHP array is returned on one line', () => {
   assert.equal(info.addons, 'tci, mac, cueme3, voice');
   assert.equal(info.customerEmail, 'customer@example.com');
   assert.equal(info.initialActivationDate, '2026-03-24');
+  assert.equal(info.renewalDate, null);
   assert.deepEqual(info.addonDetails, [
     { name: 'tci', demo: false, expiration: null },
     { name: 'mac', demo: false, expiration: null },

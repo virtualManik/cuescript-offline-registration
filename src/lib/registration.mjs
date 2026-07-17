@@ -15,7 +15,9 @@ const isUsableDate = (value) => {
 };
 
 const calculateExpiration = (record) => {
-  const startDate = record.licences_initial_activation_date;
+  const startDate = isUsableDate(record.licences_renewal_date)
+    ? record.licences_renewal_date
+    : record.licences_initial_activation_date;
   const termDays = Number.parseInt(record.licences_term_in_days, 10);
   if (!isUsableDate(startDate) || !Number.isFinite(termDays) || termDays >= LIFETIME_TERM_DAYS) {
     return null;
@@ -111,6 +113,9 @@ export const parseRegistrationLookupResponse = (body) => {
     ]) ?? null,
     initialActivationDate: isUsableDate(record.licences_initial_activation_date)
       ? record.licences_initial_activation_date
+      : null,
+    renewalDate: isUsableDate(record.licences_renewal_date)
+      ? record.licences_renewal_date
       : null,
     addons: addonDetails.map(({ name }) => name).join(', '),
     addonDetails,
