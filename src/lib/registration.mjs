@@ -1,6 +1,9 @@
 export const REGISTRATION_URL =
   'https://www.cuescript.tv/catalog/software_registration_successful.php';
 
+export const MAX_REGISTRATION_LOOKUPS = 25;
+export const REGISTRATION_LOOKUP_CONCURRENCY = 4;
+
 const INVALID_DATE = '0000-00-00';
 const LIFETIME_TERM_DAYS = 365000;
 const ADDON_METADATA_KEYS = new Set(['demoexpires']);
@@ -97,6 +100,53 @@ export const buildRegistrationLookupUrl = (serial) => {
   return url;
 };
 
+export const parseRegistrationSearch = (query) => {
+  if (typeof query !== 'string') {
+    return {
+      ok: false,
+      error: 'License search must be text.',
+      serials: [],
+      invalidSerials: [],
+      validCount: 0,
+    };
+  }
+
+  const serials = query
+    .split(';')
+    .map((serial) => serial.trim())
+    .filter(Boolean);
+  const invalidSerials = serials.filter((serial) => serial.length !== 10);
+  const validCount = serials.length - invalidSerials.length;
+
+  if (serials.length === 0) {
+    return {
+      ok: false,
+      error: 'Enter at least one license number.',
+      serials,
+      invalidSerials,
+      validCount,
+    };
+  }
+
+  if (serials.length > MAX_REGISTRATION_LOOKUPS) {
+    return {
+      ok: false,
+      error: `Enter no more than ${MAX_REGISTRATION_LOOKUPS} license numbers at a time.`,
+      serials,
+      invalidSerials,
+      validCount,
+    };
+  }
+
+  return {
+    ok: true,
+    error: null,
+    serials,
+    invalidSerials,
+    validCount,
+  };
+};
+
 export const parseRegistrationLookupResponse = (body) => {
   const record = parsePhpArray(body);
   const addonDetails = parseAddons(record.licences_addon_options);
@@ -144,10 +194,49 @@ export const lookupRegistration = async (serial, fetchImpl = fetch) => {
     };
   }
 
-  const body = await response.text();
+  let body;
+  try {
+    body = await response.text();
+  } catch (err) {
+    return { ok: false, error: `Could not read the registration server response: ${err.message}` };
+  }
+
   try {
     return { ok: true, info: parseRegistrationLookupResponse(body) };
   } catch (err) {
     return { ok: false, error: err.message };
   }
+};
+
+export const lookupRegistrations = async (query, fetchImpl = fetch) => {
+  const parsed = parseRegistrationSearch(query);
+  if (!parsed.ok) {
+    return { ok: false, error: parsed.error };
+  }
+
+  const results = new Array(parsed.serials.length);
+  let nextIndex = 0;
+
+  const lookupNext = async () => {
+    while (nextIndex < parsed.serials.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      const serial = parsed.serials[index];
+      let result;
+      try {
+        result = await lookupRegistration(serial, fetchImpl);
+      } catch (err) {
+        result = {
+          ok: false,
+          error: `Could not complete the registration lookup: ${err.message}`,
+        };
+      }
+      results[index] = { serial, ...result };
+    }
+  };
+
+  const workerCount = Math.min(REGISTRATION_LOOKUP_CONCURRENCY, parsed.serials.length);
+  await Promise.all(Array.from({ length: workerCount }, () => lookupNext()));
+
+  return { ok: true, results };
 };

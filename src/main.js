@@ -3,7 +3,11 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import started from 'electron-squirrel-startup';
-import { REGISTRATION_URL, lookupRegistration } from './lib/registration.mjs';
+import {
+  REGISTRATION_URL,
+  lookupRegistration,
+  lookupRegistrations,
+} from './lib/registration.mjs';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -113,6 +117,10 @@ ipcMain.handle('lookup-registration', async (_event, { serial }) => {
   return lookupRegistration(serial);
 });
 
+ipcMain.handle('lookup-registrations', async (_event, { query }) => {
+  return lookupRegistrations(query);
+});
+
 ipcMain.handle('generate-registration', async (_event, { serial, email, renew }) => {
   if (typeof email !== 'string' || !email.trim()) {
     return { ok: false, error: 'Customer email is required to generate an offline registration file.' };
@@ -156,8 +164,8 @@ ipcMain.handle('copy-to-clipboard', (_event, text) => {
 
 const createWindow = () => {
   const mainWindow = new BrowserWindow({
-    width: 560,
-    height: 780,
+    width: 640,
+    height: 900,
     minWidth: 480,
     minHeight: 640,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',

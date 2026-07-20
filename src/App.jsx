@@ -6,6 +6,8 @@ import {
   CircleCheck,
   Download,
   RotateCcw,
+  ChevronLeft,
+  ChevronRight,
   Search,
   Cpu,
   Package,
@@ -20,6 +22,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  MAX_REGISTRATION_LOOKUPS,
+  parseRegistrationSearch,
+} from '@/lib/registration.mjs';
+import { lookupRegistrationSearch } from '@/lib/registration-client.mjs';
 import {
   Card,
   CardHeader,
@@ -277,15 +284,15 @@ function ResultRow({ icon: Icon, label, children, copyValue, copied, onCopy }) {
   );
 }
 
-export default function App() {
-  const [serial, setSerial] = React.useState('');
-  const [email, setEmail] = React.useState('');
+function LicenseResultCard({ result }) {
+  const { info } = result;
+  const formId = React.useId();
+  const emailId = `${formId}-email`;
+  const renewId = `${formId}-renew`;
+  const [email, setEmail] = React.useState(info.customerEmail ?? '');
   const [renew, setRenew] = React.useState(false);
-  const [lookupLoading, setLookupLoading] = React.useState(false);
   const [generateLoading, setGenerateLoading] = React.useState(false);
   const [showGenerate, setShowGenerate] = React.useState(false);
-  const [error, setError] = React.useState(null);
-  const [result, setResult] = React.useState(null);
   const [registration, setRegistration] = React.useState(null);
   const [savedPath, setSavedPath] = React.useState(null);
   const [saveError, setSaveError] = React.useState(null);
@@ -297,34 +304,20 @@ export default function App() {
     copiedTimers.current.forEach((timer) => clearTimeout(timer));
   }, []);
 
-  const serialValid = serial.length === 10;
   const emailValid = EMAIL_PATTERN.test(email);
-  const canLookup = serialValid && !lookupLoading;
+  const serialValid = typeof info.serial === 'string' && info.serial.length === 10;
   const canGenerate = serialValid && emailValid && !generateLoading;
-
-  const handleLookup = async (e) => {
-    e.preventDefault();
-    if (!canLookup) return;
-    setLookupLoading(true);
-    setError(null);
-    setResult(null);
-    setRegistration(null);
-    setSavedPath(null);
-    setSaveError(null);
-    setGenerateError(null);
-    setShowGenerate(false);
-
-    const response = await window.api.lookupRegistration({ serial });
-    setLookupLoading(false);
-    if (response.ok) {
-      setResult(response);
-      if (!email && response.info.customerEmail) {
-        setEmail(response.info.customerEmail);
-      }
-    } else {
-      setError(response.error);
-    }
-  };
+  const expiration = formatRegistrationExpiration(info.regEndDate);
+  const licenseDemo = detectDemoFromFields(info, LICENSE_DEMO_FIELDS) === true;
+  const addons = parseAddons(info);
+  const formatAddonsForClipboard = (items) => items.map((addon) => {
+    const license = addon.demo === null ? null : (addon.demo ? 'Demo' : 'Licensed');
+    const expiry = addon.formattedExpiration?.label ?? 'No expiry';
+    return [addon.name, license, `Expires: ${expiry}`].filter(Boolean).join(' — ');
+  }).join('; ');
+  const addonCopyValue = formatAddonsForClipboard(addons);
+  const initialActivation = formatDate(info.initialActivationDate)?.label;
+  const renewalDate = formatDate(info.renewalDate)?.label;
 
   const handleGenerate = async (e) => {
     e.preventDefault();
@@ -335,58 +328,41 @@ export default function App() {
     setSavedPath(null);
     setSaveError(null);
 
-    const response = await window.api.generateRegistration({
-      serial: result.info.serial,
-      email,
-      renew,
-    });
-    setGenerateLoading(false);
-    if (response.ok) {
-      setRegistration(response);
-    } else {
-      setGenerateError(response.error);
+    try {
+      const response = await window.api.generateRegistration({
+        serial: info.serial,
+        email,
+        renew,
+      });
+      if (response.ok) {
+        setRegistration(response);
+      } else {
+        setGenerateError(response.error);
+      }
+    } catch (err) {
+      setGenerateError(`Could not generate the registration: ${err.message}`);
+    } finally {
+      setGenerateLoading(false);
     }
   };
 
   const handleSave = async () => {
     setSaveError(null);
-    const response = await window.api.saveRegistration({
-      serial: result.info.serial,
-      raw: registration.raw,
-    });
-    if (response.canceled) return;
-    if (response.error) {
-      setSaveError(response.error);
-    } else {
-      setSavedPath(response.filePath);
+    try {
+      const response = await window.api.saveRegistration({
+        serial: info.serial,
+        raw: registration.raw,
+      });
+      if (response.canceled) return;
+      if (response.error) {
+        setSaveError(response.error);
+      } else {
+        setSavedPath(response.filePath);
+      }
+    } catch (err) {
+      setSaveError(`Could not save the registration: ${err.message}`);
     }
   };
-
-  const handleReset = () => {
-    setResult(null);
-    setError(null);
-    setRegistration(null);
-    setSavedPath(null);
-    setSaveError(null);
-    setGenerateError(null);
-    setShowGenerate(false);
-    setRenew(false);
-    copiedTimers.current.forEach((timer) => clearTimeout(timer));
-    copiedTimers.current.clear();
-    setCopiedKeys(new Set());
-  };
-
-  const expiration = result ? formatRegistrationExpiration(result.info.regEndDate) : null;
-  const licenseDemo = result ? detectDemoFromFields(result.info, LICENSE_DEMO_FIELDS) === true : false;
-  const addons = result ? parseAddons(result.info) : [];
-  const formatAddonsForClipboard = (items) => items.map((addon) => {
-    const license = addon.demo === null ? null : (addon.demo ? 'Demo' : 'Licensed');
-    const expiry = addon.formattedExpiration?.label ?? 'No expiry';
-    return [addon.name, license, `Expires: ${expiry}`].filter(Boolean).join(' — ');
-  }).join('; ');
-  const addonCopyValue = formatAddonsForClipboard(addons);
-  const initialActivation = result ? formatDate(result.info.initialActivationDate)?.label : null;
-  const renewal = result ? formatDate(result.info.renewalDate)?.label : null;
 
   const copyText = async (key, text) => {
     let response;
@@ -412,100 +388,20 @@ export default function App() {
     copiedTimers.current.set(key, timer);
   };
 
-  const licenseSummary = result ? [
+  const licenseSummary = [
     `License Status: ${licenseDemo ? 'Demo' : 'Licensed'}`,
     `Registration Status: ${expiration?.expired ? 'Expired' : 'Valid'}`,
-    `Serial Number: ${result.info.serial}`,
-    `Flavor: ${String(result.info.flavor ?? '—')}`,
-    `Customer Email: ${result.info.customerEmail ?? '—'}`,
+    `Serial Number: ${info.serial}`,
+    `Flavor: ${String(info.flavor ?? '—')}`,
+    `Customer Email: ${info.customerEmail ?? '—'}`,
     `Initial Activation: ${initialActivation ?? '—'}`,
-    `Renewal: ${renewal ?? 'No renewal'}`,
+    `Renewal: ${renewalDate ?? 'No renewal'}`,
     `Addons: ${addonCopyValue || 'None'}`,
     `Expiration: ${expiration?.label ?? '—'}`,
-  ].join('\n') : '';
+  ].join('\n');
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="titlebar-drag flex items-center gap-3 px-6 pb-4 pt-10">
-        <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-          <img src={logo} alt="CueScript" className="size-6" />
-        </div>
-        <div>
-          <h1 className="text-base font-semibold leading-tight">CueScript Offline Registration</h1>
-          <p className="text-sm text-muted-foreground">
-            Look up CueiT registration details and generate .csr files
-          </p>
-        </div>
-      </header>
-
-      <main className="flex-1 space-y-4 px-6 pb-8">
-        {!result && (
-          <Card>
-            <form onSubmit={handleLookup}>
-              <CardHeader>
-                <CardTitle>Serial lookup</CardTitle>
-                <CardDescription>
-                  Enter the device serial number to view registration details.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <div className="space-y-2">
-                  <div className="flex items-baseline justify-between">
-                    <Label htmlFor="serial">Serial Number</Label>
-                    <span
-                      className={
-                        'text-xs tabular-nums ' +
-                        (serialValid ? 'text-success' : 'text-muted-foreground')
-                      }
-                    >
-                      {serial.length}/10
-                    </span>
-                  </div>
-                  <Input
-                    id="serial"
-                    value={serial}
-                    onChange={(e) => setSerial(e.target.value.trim())}
-                    maxLength={10}
-                    placeholder="0123456789"
-                    autoFocus
-                    spellCheck={false}
-                    className="font-mono tracking-widest"
-                  />
-                  {serial.length > 0 && !serialValid && (
-                    <p className="text-xs text-destructive">
-                      Serial number must be exactly 10 characters.
-                    </p>
-                  )}
-                </div>
-
-                {error && (
-                  <div className="flex items-start gap-2.5 rounded-lg bg-destructive-soft p-3 text-sm text-destructive">
-                    <CircleAlert className="mt-0.5 size-4 shrink-0" />
-                    <span className="break-words">{error}</span>
-                  </div>
-                )}
-              </CardContent>
-              <CardFooter>
-                <Button type="submit" size="lg" className="w-full" disabled={!canLookup}>
-                  {lookupLoading ? (
-                    <>
-                      <Loader2 className="animate-spin" />
-                      Looking up registration…
-                    </>
-                  ) : (
-                    <>
-                      <Search />
-                      Look Up Registration
-                    </>
-                  )}
-                </Button>
-              </CardFooter>
-            </form>
-          </Card>
-        )}
-
-        {result && (
-          <Card>
+    <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Registration retrieved</CardTitle>
@@ -527,29 +423,29 @@ export default function App() {
                 <ResultRow
                   icon={Cpu}
                   label="Serial Number"
-                  copyValue={result.info.serial}
+                  copyValue={info.serial}
                   copied={copiedKeys.has('serial')}
                   onCopy={(text) => copyText('serial', text)}
                 >
-                  <span className="font-mono">{result.info.serial}</span>
+                  <span className="font-mono">{info.serial}</span>
                 </ResultRow>
                 <ResultRow
                   icon={Package}
                   label="Flavor"
-                  copyValue={result.info.flavor === undefined || result.info.flavor === null ? '' : String(result.info.flavor)}
+                  copyValue={info.flavor === undefined || info.flavor === null ? '' : String(info.flavor)}
                   copied={copiedKeys.has('flavor')}
                   onCopy={(text) => copyText('flavor', text)}
                 >
-                  {String(result.info.flavor ?? '—')}
+                  {String(info.flavor ?? '—')}
                 </ResultRow>
                 <ResultRow
                   icon={Mail}
                   label="Customer Email"
-                  copyValue={result.info.customerEmail ?? ''}
+                  copyValue={info.customerEmail ?? ''}
                   copied={copiedKeys.has('email')}
                   onCopy={(text) => copyText('email', text)}
                 >
-                  {result.info.customerEmail ?? <span className="text-muted-foreground">—</span>}
+                  {info.customerEmail ?? <span className="text-muted-foreground">—</span>}
                 </ResultRow>
                 <ResultRow
                   icon={CalendarClock}
@@ -558,18 +454,18 @@ export default function App() {
                   copied={copiedKeys.has('initialActivation')}
                   onCopy={(text) => copyText('initialActivation', text)}
                 >
-                  {formatDate(result.info.initialActivationDate)?.label ?? (
+                  {initialActivation ?? (
                     <span className="text-muted-foreground">—</span>
                   )}
                 </ResultRow>
                 <ResultRow
                   icon={CalendarClock}
                   label="Renewal"
-                  copyValue={renewal ?? ''}
+                  copyValue={renewalDate ?? ''}
                   copied={copiedKeys.has('renewal')}
                   onCopy={(text) => copyText('renewal', text)}
                 >
-                  {formatDate(result.info.renewalDate)?.label ?? (
+                  {renewalDate ?? (
                     <span className="text-muted-foreground">No renewal</span>
                   )}
                 </ResultRow>
@@ -622,40 +518,12 @@ export default function App() {
                 </ResultRow>
               </div>
 
-              {!showGenerate && !registration && (
-                <div className="mt-4 flex gap-3">
-                  <Button
-                    size="lg"
-                    className="min-w-0 flex-1"
-                    onClick={() => {
-                      setShowGenerate(true);
-                      setGenerateError(null);
-                      setSaveError(null);
-                    }}
-                  >
-                    <Download />
-                    Generate Offline Registration
-                  </Button>
-                  <Button
-                    type="button"
-                    size="lg"
-                    variant="outline"
-                    className="shrink-0"
-                    aria-label="Copy license information"
-                    onClick={() => copyText('licenseSummary', licenseSummary)}
-                  >
-                    {copiedKeys.has('licenseSummary') ? <CircleCheck className="text-success" /> : <MdiIcon path={mdiContentCopy} size={1} />}
-                    Copy License Info
-                  </Button>
-                </div>
-              )}
-
               {showGenerate && !registration && (
                 <form className="mt-4 space-y-4 rounded-lg border p-4" onSubmit={handleGenerate}>
                   <div className="space-y-2">
-                    <Label htmlFor="email">Customer Email</Label>
+                    <Label htmlFor={emailId}>Customer Email</Label>
                     <Input
-                      id="email"
+                      id={emailId}
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value.trim())}
@@ -668,8 +536,8 @@ export default function App() {
                   </div>
 
                   <div className="flex items-center gap-3">
-                    <Checkbox id="renew" checked={renew} onCheckedChange={setRenew} />
-                    <Label htmlFor="renew" className="cursor-pointer" onClick={() => setRenew(!renew)}>
+                    <Checkbox id={renewId} checked={renew} onCheckedChange={setRenew} />
+                    <Label htmlFor={renewId} className="cursor-pointer" onClick={() => setRenew(!renew)}>
                       Renew existing registration
                     </Label>
                   </div>
@@ -717,19 +585,274 @@ export default function App() {
                 </div>
               )}
             </CardContent>
-            <CardFooter className="gap-3">
+            {((!showGenerate && !registration) || registration) && (
+              <CardFooter className="grid grid-cols-1 gap-3 min-[600px]:grid-cols-2">
+              {!showGenerate && !registration && (
+                <>
+                  <Button
+                    size="lg"
+                    className="w-full px-3"
+                    onClick={() => {
+                      setShowGenerate(true);
+                      setGenerateError(null);
+                      setSaveError(null);
+                    }}
+                  >
+                    <Download />
+                    Generate
+                  </Button>
+                  <Button
+                    type="button"
+                    size="lg"
+                    variant="outline"
+                    className="w-full px-3"
+                    aria-label="Copy license information"
+                    onClick={() => copyText('licenseSummary', licenseSummary)}
+                  >
+                    {copiedKeys.has('licenseSummary') ? <CircleCheck className="text-success" /> : <MdiIcon path={mdiContentCopy} size={1} />}
+                    Copy License Info
+                  </Button>
+                </>
+              )}
               {registration && (
-                <Button size="lg" className="flex-1" onClick={handleSave}>
+                <Button size="lg" className="w-full px-3 min-[600px]:col-span-2" onClick={handleSave}>
                   <Download />
                   {savedPath ? 'Save Again…' : 'Save .csr File…'}
                 </Button>
               )}
-              <Button size="lg" variant="outline" onClick={handleReset}>
+              </CardFooter>
+            )}
+    </Card>
+  );
+}
+
+function FailedLookupCard({ result }) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <CardTitle>License lookup failed</CardTitle>
+            <CardDescription className="mt-1 truncate font-mono">
+              {result.serial}
+            </CardDescription>
+          </div>
+          <Badge variant="destructive">Failed</Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-start gap-2.5 rounded-lg bg-destructive-soft p-3 text-sm text-destructive">
+          <CircleAlert className="mt-0.5 size-4 shrink-0" />
+          <span className="break-words">{result.error}</span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export default function App() {
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [lookupLoading, setLookupLoading] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  const [lookupResults, setLookupResults] = React.useState(null);
+  const [activeResultIndex, setActiveResultIndex] = React.useState(0);
+
+  const parsedSearch = React.useMemo(
+    () => parseRegistrationSearch(searchQuery),
+    [searchQuery],
+  );
+  const hasInput = searchQuery.length > 0;
+  const tooManyLicenses = parsedSearch.serials.length > MAX_REGISTRATION_LOOKUPS;
+  const hasInvalidLicenses = parsedSearch.invalidSerials.length > 0;
+  const allEntriesValid = parsedSearch.ok
+    && parsedSearch.serials.length > 0
+    && !hasInvalidLicenses;
+  const canLookup = parsedSearch.ok && parsedSearch.validCount > 0 && !lookupLoading;
+
+  const handleLookup = async (e) => {
+    e.preventDefault();
+    if (!canLookup) return;
+
+    setLookupLoading(true);
+    setError(null);
+    setLookupResults(null);
+
+    try {
+      const response = await lookupRegistrationSearch(window.api, searchQuery);
+      if (response.ok) {
+        setActiveResultIndex(0);
+        setLookupResults(response.results);
+      } else {
+        setError(response.error);
+      }
+    } catch (err) {
+      setError(`Could not look up registrations: ${err.message}`);
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
+  const handleReset = () => {
+    setActiveResultIndex(0);
+    setLookupResults(null);
+    setError(null);
+  };
+
+  const successfulLookups = lookupResults?.filter((result) => result.ok).length ?? 0;
+  const totalLookups = lookupResults?.length ?? 0;
+  const registrationLabel = totalLookups === 1 ? 'registration' : 'registrations';
+
+  return (
+    <div className="flex min-h-screen flex-col">
+      <header className="titlebar-drag flex items-center gap-3 px-6 pb-4 pt-10">
+        <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
+          <img src={logo} alt="CueScript" className="size-6" />
+        </div>
+        <div>
+          <h1 className="text-base font-semibold leading-tight">CueScript Offline Registration</h1>
+          <p className="text-sm text-muted-foreground">
+            Look up CueiT registration details and generate .csr files
+          </p>
+        </div>
+      </header>
+
+      <main className="flex-1 space-y-4 px-6 pb-8">
+        {lookupResults === null && (
+          <Card>
+            <form onSubmit={handleLookup}>
+              <CardHeader>
+                <CardTitle>License lookup</CardTitle>
+                <CardDescription>
+                  Enter one license number, or separate up to {MAX_REGISTRATION_LOOKUPS} with semicolons.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="space-y-2">
+                  <div className="flex items-baseline justify-between">
+                    <Label htmlFor="license-search">License Number(s)</Label>
+                    <span
+                      className={
+                        'text-xs tabular-nums '
+                        + (allEntriesValid ? 'text-success' : 'text-muted-foreground')
+                      }
+                    >
+                      {parsedSearch.serials.length}/{MAX_REGISTRATION_LOOKUPS}
+                    </span>
+                  </div>
+                  <Input
+                    id="license-search"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="0123456789; 9876543210"
+                    autoFocus
+                    spellCheck={false}
+                    className="font-mono"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Each license number must be exactly 10 characters.
+                  </p>
+                  {hasInput && tooManyLicenses && (
+                    <p className="text-xs text-destructive">{parsedSearch.error}</p>
+                  )}
+                  {hasInput && !tooManyLicenses && parsedSearch.serials.length === 0 && (
+                    <p className="text-xs text-destructive">Enter at least one license number.</p>
+                  )}
+                  {!tooManyLicenses && hasInvalidLicenses && (
+                    <p className="break-words text-xs text-destructive">
+                      {parsedSearch.invalidSerials.length === 1
+                        ? 'This entry is not 10 characters: '
+                        : 'These entries are not 10 characters: '}
+                      {parsedSearch.invalidSerials.join(', ')}
+                    </p>
+                  )}
+                </div>
+
+                {error && (
+                  <div className="flex items-start gap-2.5 rounded-lg bg-destructive-soft p-3 text-sm text-destructive">
+                    <CircleAlert className="mt-0.5 size-4 shrink-0" />
+                    <span className="break-words">{error}</span>
+                  </div>
+                )}
+              </CardContent>
+              <CardFooter>
+                <Button type="submit" size="lg" className="w-full" disabled={!canLookup}>
+                  {lookupLoading ? (
+                    <>
+                      <Loader2 className="animate-spin" />
+                      Looking up {parsedSearch.serials.length === 1 ? 'registration' : 'registrations'}…
+                    </>
+                  ) : (
+                    <>
+                      <Search />
+                      Look Up {parsedSearch.serials.length === 1 ? 'Registration' : 'Registrations'}
+                    </>
+                  )}
+                </Button>
+              </CardFooter>
+            </form>
+          </Card>
+        )}
+
+        {lookupResults !== null && (
+          <>
+            <div className="flex items-center justify-between gap-4 rounded-lg border bg-card p-4">
+              <div>
+                <p className="font-medium">
+                  {successfulLookups} of {totalLookups} {registrationLabel} retrieved
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Showing result {activeResultIndex + 1} of {totalLookups} in the order entered.
+                </p>
+              </div>
+              <Button size="lg" variant="outline" className="shrink-0" onClick={handleReset}>
                 <RotateCcw />
                 New Lookup
               </Button>
-            </CardFooter>
-          </Card>
+            </div>
+
+            <div className="relative">
+              {lookupResults.map((result, index) => (
+                <div
+                  key={`${index}-${result.serial}`}
+                  className={index === activeResultIndex ? 'block' : 'hidden'}
+                  aria-hidden={index !== activeResultIndex}
+                >
+                  {result.ok ? (
+                    <LicenseResultCard result={result} />
+                  ) : (
+                    <FailedLookupCard result={result} />
+                  )}
+                </div>
+              ))}
+
+              {totalLookups > 1 && (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="absolute -left-5 top-1/2 z-10 size-10 -translate-y-1/2 rounded-full bg-background p-0 shadow-sm"
+                    aria-label="Previous registration"
+                    title="Previous registration"
+                    disabled={activeResultIndex === 0}
+                    onClick={() => setActiveResultIndex((index) => index - 1)}
+                  >
+                    <ChevronLeft />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="absolute -right-5 top-1/2 z-10 size-10 -translate-y-1/2 rounded-full bg-background p-0 shadow-sm"
+                    aria-label="Next registration"
+                    title="Next registration"
+                    disabled={activeResultIndex === totalLookups - 1}
+                    onClick={() => setActiveResultIndex((index) => index + 1)}
+                  >
+                    <ChevronRight />
+                  </Button>
+                </>
+              )}
+            </div>
+          </>
         )}
       </main>
     </div>
