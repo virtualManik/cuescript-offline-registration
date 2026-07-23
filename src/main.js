@@ -1,4 +1,12 @@
-import { app, BrowserWindow, ipcMain, dialog, nativeImage, clipboard } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  nativeImage,
+  clipboard,
+  session,
+} from 'electron';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
@@ -8,6 +16,22 @@ import {
   lookupRegistration,
   lookupRegistrations,
 } from './lib/registration.mjs';
+import {
+  ADMIN_CUSTOMERS_URL,
+  ADMIN_ERROR,
+  ADMIN_LOGIN_URL,
+  MAX_CUSTOMER_CANDIDATES,
+  assertAllowedAdminUrl,
+  buildCustomerSearchUrl,
+  extractCustomerCandidates,
+  isAuthenticatedPage,
+  isLoginPage,
+  matchesCustomerEmail,
+  normalizeAdminRedirect,
+  parseCustomerAccount,
+  parseCustomerProfile,
+  validateCustomerEmail,
+} from './lib/admin.mjs';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -17,6 +41,195 @@ if (started) {
 const DECRYPTION_KEY = Buffer.from('0-3.4=q!Yg#{oWo:8)evq(zh9<^qBi6r', 'binary');
 const CUSTOM_APP_ICON_FILENAME = 'custom-app-icon.png';
 let activeAppIcon = null;
+let adminSession = null;
+let adminAuthenticated = false;
+
+const adminFailure = (code, error) => ({ ok: false, code, error });
+
+const getAdminSession = () => {
+  if (!adminSession) {
+    adminSession = session.fromPartition('cuescript-admin-session', { cache: false });
+  }
+  return adminSession;
+};
+
+const clearAdminSession = async () => {
+  adminAuthenticated = false;
+  if (!adminSession) return;
+  await adminSession.clearStorageData();
+  await adminSession.clearCache();
+};
+
+const checkAdminTransport = async () => {
+  const response = await fetch(ADMIN_LOGIN_URL, {
+    method: 'GET',
+    redirect: 'manual',
+    headers: { 'cache-control': 'no-cache' },
+  });
+  assertAllowedAdminUrl(response.url || ADMIN_LOGIN_URL);
+  if ([301, 302, 303, 307, 308].includes(response.status)) {
+    const location = response.headers.get('location');
+    if (!location) throw new Error(ADMIN_ERROR.REMOTE_FORMAT_CHANGED);
+    return normalizeAdminRedirect(location, ADMIN_LOGIN_URL);
+  }
+  return assertAllowedAdminUrl(response.url || ADMIN_LOGIN_URL);
+};
+
+const establishAdminSession = async (loginUrl) => {
+  const sessionId = loginUrl.searchParams.get('osCAdminID');
+  if (!sessionId || !/^[a-z0-9]+$/i.test(sessionId)) {
+    throw new Error(ADMIN_ERROR.REMOTE_FORMAT_CHANGED);
+  }
+  await getAdminSession().cookies.set({
+    url: ADMIN_LOGIN_URL,
+    name: 'osCAdminID',
+    value: sessionId,
+    path: '/catalog/admin/',
+    httpOnly: true,
+    secure: false,
+    sameSite: 'lax',
+  });
+};
+
+const secureAdminFetch = async (input, init = {}) => {
+  let url = assertAllowedAdminUrl(input);
+  let method = init.method || 'GET';
+  let body = init.body;
+  let headers = init.headers;
+
+  for (let redirectCount = 0; redirectCount <= 5; redirectCount += 1) {
+    const redirectMode = method === 'GET' || method === 'HEAD' ? 'manual' : 'follow';
+    const response = await getAdminSession().fetch(url.href, {
+      ...init,
+      method,
+      body,
+      headers,
+      redirect: redirectMode,
+    });
+    if (![301, 302, 303, 307, 308].includes(response.status)) {
+      assertAllowedAdminUrl(response.url || url.href);
+      return response;
+    }
+
+    const location = response.headers.get('location');
+    if (!location || redirectCount === 5) {
+      throw new Error(ADMIN_ERROR.REMOTE_FORMAT_CHANGED);
+    }
+    url = normalizeAdminRedirect(location, url);
+    if ([301, 302, 303].includes(response.status) && method !== 'GET' && method !== 'HEAD') {
+      method = 'GET';
+      body = undefined;
+      headers = undefined;
+    }
+  }
+  throw new Error(ADMIN_ERROR.REMOTE_FORMAT_CHANGED);
+};
+
+const adminErrorResponse = (error) => {
+  if (error?.message === ADMIN_ERROR.SECURE_TRANSPORT_REQUIRED) {
+    return adminFailure(
+      ADMIN_ERROR.SECURE_TRANSPORT_REQUIRED,
+      'The administration server redirected outside the allowed CueScript administration area.',
+    );
+  }
+  if (error?.message === ADMIN_ERROR.REMOTE_FORMAT_CHANGED) {
+    return adminFailure(
+      ADMIN_ERROR.REMOTE_FORMAT_CHANGED,
+      'The administration server response could not be read safely.',
+    );
+  }
+  return adminFailure(
+    ADMIN_ERROR.NETWORK_ERROR,
+    'Could not reach the secure administration server.',
+  );
+};
+
+const loginAdmin = async ({ username, password } = {}) => {
+  if (typeof username !== 'string' || !username.trim() || typeof password !== 'string' || !password) {
+    return adminFailure(ADMIN_ERROR.INVALID_CREDENTIALS, 'Enter an administrator username and password.');
+  }
+  await clearAdminSession();
+  try {
+    const secureLoginUrl = await checkAdminTransport();
+    await establishAdminSession(secureLoginUrl);
+    const loginPage = await secureAdminFetch(secureLoginUrl);
+    const loginHtml = await loginPage.text();
+    if (!isLoginPage(loginHtml)) throw new Error(ADMIN_ERROR.REMOTE_FORMAT_CHANGED);
+
+    const form = new URLSearchParams({ username: username.trim(), password });
+    const response = await secureAdminFetch(`${ADMIN_LOGIN_URL}?action=process`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form.toString(),
+    });
+    const html = await response.text();
+    if (!isAuthenticatedPage(html)) {
+      await clearAdminSession();
+      return adminFailure(ADMIN_ERROR.INVALID_CREDENTIALS, 'The administrator username or password was not accepted.');
+    }
+    adminAuthenticated = true;
+    return { ok: true, authenticated: true };
+  } catch (error) {
+    await clearAdminSession();
+    return adminErrorResponse(error);
+  }
+};
+
+const lookupAdminCustomer = async ({ email } = {}) => {
+  if (!adminAuthenticated) {
+    return adminFailure(ADMIN_ERROR.SESSION_EXPIRED, 'Sign in to search customer information.');
+  }
+  const validated = validateCustomerEmail(email);
+  if (!validated.ok) {
+    return adminFailure(ADMIN_ERROR.NOT_FOUND, validated.error);
+  }
+
+  try {
+    const response = await secureAdminFetch(buildCustomerSearchUrl(validated.email));
+    const searchHtml = await response.text();
+    if (isLoginPage(searchHtml)) {
+      await clearAdminSession();
+      return adminFailure(ADMIN_ERROR.SESSION_EXPIRED, 'The administrator session expired. Sign in again.');
+    }
+    const candidates = extractCustomerCandidates(searchHtml);
+    if (candidates.length > MAX_CUSTOMER_CANDIDATES) {
+      return adminFailure(ADMIN_ERROR.TOO_MANY_MATCHES, 'The search returned too many possible customers.');
+    }
+
+    const matches = [];
+    for (const customerId of candidates) {
+      const detailUrl = new URL(ADMIN_CUSTOMERS_URL);
+      detailUrl.searchParams.set('search', validated.email);
+      detailUrl.searchParams.set('page', '1');
+      detailUrl.searchParams.set('cID', customerId);
+
+      const summaryResponse = await secureAdminFetch(detailUrl);
+      const summaryHtml = await summaryResponse.text();
+      if (isLoginPage(summaryHtml)) {
+        await clearAdminSession();
+        return adminFailure(ADMIN_ERROR.SESSION_EXPIRED, 'The administrator session expired. Sign in again.');
+      }
+
+      detailUrl.searchParams.set('action', 'edit');
+      const profileResponse = await secureAdminFetch(detailUrl);
+      const profileHtml = await profileResponse.text();
+      if (isLoginPage(profileHtml)) {
+        await clearAdminSession();
+        return adminFailure(ADMIN_ERROR.SESSION_EXPIRED, 'The administrator session expired. Sign in again.');
+      }
+      const profile = parseCustomerProfile(profileHtml);
+      if (matchesCustomerEmail(profile, validated.email)) {
+        matches.push({ ...profile, account: parseCustomerAccount(summaryHtml) });
+      }
+    }
+    if (matches.length === 0) {
+      return adminFailure(ADMIN_ERROR.NOT_FOUND, 'No customer matched that email address.');
+    }
+    return { ok: true, matches };
+  } catch (error) {
+    return adminErrorResponse(error);
+  }
+};
 
 const getCustomAppIconPath = () => path.join(app.getPath('userData'), CUSTOM_APP_ICON_FILENAME);
 
@@ -144,6 +357,43 @@ const generateRegistration = async ({ serial, email, renew = false }) => {
   }
 };
 
+ipcMain.handle('admin-status', async () => {
+  if (adminAuthenticated) {
+    return { ok: true, authenticated: true, secureAvailable: true, insecureTransport: true };
+  }
+  try {
+    const secureLoginUrl = await checkAdminTransport();
+    await establishAdminSession(secureLoginUrl);
+    const response = await secureAdminFetch(secureLoginUrl);
+    const html = await response.text();
+    if (!isLoginPage(html)) throw new Error(ADMIN_ERROR.REMOTE_FORMAT_CHANGED);
+    return {
+      ok: true,
+      authenticated: false,
+      secureAvailable: true,
+      insecureTransport: true,
+    };
+  } catch (error) {
+    return { ...adminErrorResponse(error), authenticated: false, secureAvailable: false };
+  }
+});
+
+ipcMain.handle('admin-login', async (_event, payload) => loginAdmin(payload));
+
+ipcMain.handle('admin-logout', async () => {
+  try {
+    if (adminAuthenticated) {
+      await secureAdminFetch(`${ADMIN_LOGIN_URL}?action=logoff`);
+    }
+  } catch {
+    // Local session data is cleared even if remote logout cannot complete.
+  }
+  await clearAdminSession();
+  return { ok: true, authenticated: false };
+});
+
+ipcMain.handle('lookup-admin-customer', async (_event, payload) => lookupAdminCustomer(payload));
+
 ipcMain.handle('lookup-registration', async (_event, { serial }) => {
   return lookupRegistration(serial);
 });
@@ -266,5 +516,12 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
+  }
+});
+
+app.on('before-quit', () => {
+  adminAuthenticated = false;
+  if (adminSession) {
+    void adminSession.clearStorageData();
   }
 });

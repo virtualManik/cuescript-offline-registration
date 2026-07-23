@@ -8,15 +8,18 @@ import {
   RotateCcw,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  Check,
   Search,
   Cpu,
   Package,
   Puzzle,
   CalendarClock,
   Mail,
-  Settings,
   ArrowLeft,
   Upload,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import MdiIcon from '@mdi/react';
 import { mdiContentCopy } from '@mdi/js';
@@ -43,10 +46,13 @@ import {
   CardContent,
   CardFooter,
 } from '@/components/ui/card';
+import { Sidebar } from '@/components/Sidebar';
+import { CustomerLookupPage } from '@/components/CustomerLookupPage';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const APP_ICON_STORAGE_KEY = 'cuescript.customAppIcon';
 const APP_ICON_NAME_STORAGE_KEY = 'cuescript.customAppIconName';
+const THEME_STORAGE_KEY = 'cuescript.theme';
 const MAX_APP_ICON_SIZE = 2 * 1024 * 1024;
 const DEMO_TRUE_VALUES = new Set(['1', 'true', 'yes', 'demo', 'trial', 'evaluation', 'eval']);
 const DEMO_FALSE_VALUES = new Set([
@@ -657,16 +663,127 @@ function FailedLookupCard({ result }) {
   );
 }
 
+const THEME_OPTIONS = [
+  { value: 'light', label: 'Light', icon: Sun },
+  { value: 'dark', label: 'Dark', icon: Moon },
+];
+
+function ThemeSelect({ id, value, onValueChange }) {
+  const [open, setOpen] = React.useState(false);
+  const containerRef = React.useRef(null);
+  const selectedTheme = THEME_OPTIONS.find((option) => option.value === value)
+    ?? THEME_OPTIONS[0];
+  const SelectedIcon = selectedTheme.icon;
+
+  React.useEffect(() => {
+    if (!open) return undefined;
+
+    const closeOnOutsideClick = (event) => {
+      if (!containerRef.current?.contains(event.target)) setOpen(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') {
+        setOpen(false);
+        containerRef.current?.querySelector('[role="combobox"]')?.focus();
+      }
+    };
+
+    document.addEventListener('pointerdown', closeOnOutsideClick);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
+  const selectTheme = (nextTheme) => {
+    onValueChange(nextTheme);
+    setOpen(false);
+  };
+
+  const handleKeyDown = (event) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (!open) {
+        setOpen(true);
+        return;
+      }
+
+      const currentIndex = THEME_OPTIONS.findIndex((option) => option.value === value);
+      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      const nextIndex = (currentIndex + direction + THEME_OPTIONS.length)
+        % THEME_OPTIONS.length;
+      onValueChange(THEME_OPTIONS[nextIndex].value);
+    }
+  };
+
+  return (
+    <div ref={containerRef} className="relative w-36 shrink-0">
+      <button
+        id={id}
+        type="button"
+        role="combobox"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={`${id}-options`}
+        className="flex h-10 w-full items-center gap-2 rounded-lg border border-input bg-background px-3 text-sm font-medium shadow-sm transition-colors hover:bg-muted focus-visible:border-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={() => setOpen((current) => !current)}
+        onKeyDown={handleKeyDown}
+      >
+        <SelectedIcon className="size-4 text-muted-foreground" />
+        <span className="flex-1 text-left">{selectedTheme.label}</span>
+        <ChevronDown
+          className={`size-4 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+
+      {open && (
+        <div
+          id={`${id}-options`}
+          role="listbox"
+          aria-label="Theme"
+          className="absolute right-0 top-full z-50 mt-1.5 w-full overflow-hidden rounded-lg border bg-card p-1 text-card-foreground shadow-lg"
+        >
+          {THEME_OPTIONS.map((option) => {
+            const OptionIcon = option.icon;
+            const selected = option.value === value;
+
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none ${
+                  selected ? 'font-medium text-foreground' : 'text-muted-foreground'
+                }`}
+                onClick={() => selectTheme(option.value)}
+              >
+                <OptionIcon className="size-4" />
+                <span className="flex-1 text-left">{option.label}</span>
+                {selected && <Check className="size-4 text-primary" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsPage({
   icon,
   iconName,
   hasCustomIcon,
   iconError,
+  theme,
   onBack,
   onIconChange,
   onResetIcon,
+  onThemeChange,
 }) {
   const iconInputId = React.useId();
+  const themeSelectId = React.useId();
 
   return (
     <main className="flex-1 px-6 pb-24">
@@ -674,10 +791,23 @@ function SettingsPage({
         <CardHeader>
           <CardTitle>Settings</CardTitle>
           <CardDescription>
-            Personalize the icon shown in this app. Your selection is saved on this computer.
+            Personalize the appearance of this app. Your selections are saved on this computer.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between gap-6 rounded-lg border p-4">
+            <div className="space-y-1">
+              <Label htmlFor={themeSelectId}>Theme</Label>
+              <p className="text-xs text-muted-foreground">
+                Choose how the app looks on this computer.
+              </p>
+            </div>
+            <ThemeSelect
+              id={themeSelectId}
+              value={theme}
+              onValueChange={onThemeChange}
+            />
+          </div>
           <div className="flex items-start gap-4 rounded-lg border p-4">
             <div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-primary/10">
               <img src={icon} alt="" className="size-11 object-contain" />
@@ -748,6 +878,9 @@ export default function App() {
   const [lookupResults, setLookupResults] = React.useState(null);
   const [activeResultIndex, setActiveResultIndex] = React.useState(0);
   const [page, setPage] = React.useState('registration');
+  const [theme, setTheme] = React.useState(() => (
+    document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+  ));
   const [customIcon, setCustomIcon] = React.useState(() => {
     try {
       return localStorage.getItem(APP_ICON_STORAGE_KEY);
@@ -763,6 +896,15 @@ export default function App() {
     }
   });
   const [iconError, setIconError] = React.useState(null);
+
+  React.useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // The theme still applies for this session if storage is unavailable.
+    }
+  }, [theme]);
 
   React.useEffect(() => {
     if (!customIcon || typeof window.api?.setAppIcon !== 'function') return;
@@ -822,6 +964,20 @@ export default function App() {
   const registrationLabel = totalLookups === 1 ? 'registration' : 'registrations';
   const appIcon = customIcon || logo;
   const appIconName = customIconName || 'CueScript default icon';
+  const pageMetadata = {
+    registration: {
+      title: 'CueScript Offline Registration',
+      description: 'Look up CueiT registration details and generate .csr files',
+    },
+    customer: {
+      title: 'Customer Lookup',
+      description: 'Securely find customer profile information by email',
+    },
+    settings: {
+      title: 'Settings',
+      description: 'Customize your offline registration app',
+    },
+  }[page];
 
   const handleIconChange = (event) => {
     const file = event.target.files?.[0];
@@ -892,22 +1048,15 @@ export default function App() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="titlebar-drag flex items-center gap-3 px-6 pb-4 pt-10">
-        <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-          <img src={appIcon} alt="CueScript" className="size-6 object-contain" />
-        </div>
-        <div>
-          <h1 className="text-base font-semibold leading-tight">
-            {page === 'settings' ? 'Settings' : 'CueScript Offline Registration'}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {page === 'settings'
-              ? 'Customize your offline registration app'
-              : 'Look up CueiT registration details and generate .csr files'}
-          </p>
-        </div>
-      </header>
+    <div className="min-h-screen">
+      <Sidebar page={page} logo={appIcon} onSelect={setPage} />
+      <div className="ml-16 flex min-h-screen flex-col">
+        <header className="titlebar-drag flex items-center gap-3 px-6 pb-4 pt-10">
+          <div>
+            <h1 className="text-base font-semibold leading-tight">{pageMetadata.title}</h1>
+            <p className="text-sm text-muted-foreground">{pageMetadata.description}</p>
+          </div>
+        </header>
 
       {page === 'settings' ? (
         <SettingsPage
@@ -915,10 +1064,14 @@ export default function App() {
           iconName={appIconName}
           hasCustomIcon={Boolean(customIcon)}
           iconError={iconError}
+          theme={theme}
           onBack={() => setPage('registration')}
           onIconChange={handleIconChange}
           onResetIcon={handleResetIcon}
+          onThemeChange={setTheme}
         />
+      ) : page === 'customer' ? (
+        <CustomerLookupPage />
       ) : (
       <main className="flex-1 space-y-4 px-6 pb-24">
         {lookupResults === null && (
@@ -1060,20 +1213,7 @@ export default function App() {
         )}
       </main>
       )}
-
-      <Button
-        type="button"
-        variant={page === 'settings' ? 'secondary' : 'outline'}
-        className="fixed bottom-4 right-4 z-30 size-9 rounded-full bg-background p-0 shadow-md"
-        aria-label={page === 'settings' ? 'Close settings' : 'Open settings'}
-        title={page === 'settings' ? 'Close settings' : 'Settings'}
-        aria-pressed={page === 'settings'}
-        onClick={() => setPage((currentPage) => (
-          currentPage === 'settings' ? 'registration' : 'settings'
-        ))}
-      >
-        {page === 'settings' ? <ArrowLeft /> : <Settings />}
-      </Button>
+      </div>
     </div>
   );
 }
