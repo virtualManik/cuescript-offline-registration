@@ -6,4 +6,6 @@ contextBridge.exposeInMainWorld('api', {
   generateRegistration: (payload) => ipcRenderer.invoke('generate-registration', payload),
   saveRegistration: (payload) => ipcRenderer.invoke('save-registration', payload),
   copyToClipboard: (text) => ipcRenderer.invoke('copy-to-clipboard', text),
+  setAppIcon: (payload) => ipcRenderer.invoke('set-app-icon', payload),
+  resetAppIcon: () => ipcRenderer.invoke('reset-app-icon'),
 });

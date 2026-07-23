@@ -15,6 +15,37 @@ if (started) {
 }
 
 const DECRYPTION_KEY = Buffer.from('0-3.4=q!Yg#{oWo:8)evq(zh9<^qBi6r', 'binary');
+const CUSTOM_APP_ICON_FILENAME = 'custom-app-icon.png';
+let activeAppIcon = null;
+
+const getCustomAppIconPath = () => path.join(app.getPath('userData'), CUSTOM_APP_ICON_FILENAME);
+
+const getDefaultAppIcon = () => nativeImage.createFromPath(
+  app.isPackaged
+    ? path.join(process.resourcesPath, '512x512.png')
+    : path.join(app.getAppPath(), 'src/assets/icons/512x512.png')
+);
+
+const applyAppIcon = (icon) => {
+  if (!icon || icon.isEmpty()) return;
+
+  activeAppIcon = icon;
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.setIcon(icon);
+  }
+  if (process.platform !== 'darwin') {
+    BrowserWindow.getAllWindows().forEach((window) => window.setIcon(icon));
+  }
+};
+
+const loadSavedAppIcon = async () => {
+  try {
+    const icon = nativeImage.createFromPath(getCustomAppIconPath());
+    return icon.isEmpty() ? null : icon;
+  } catch {
+    return null;
+  }
+};
 
 const decryptRegistration = (body) => {
   const decipher = crypto.createDecipheriv('aes-256-cbc', DECRYPTION_KEY, Buffer.alloc(16));
@@ -162,6 +193,40 @@ ipcMain.handle('copy-to-clipboard', (_event, text) => {
   }
 });
 
+ipcMain.handle('set-app-icon', async (_event, { dataUrl } = {}) => {
+  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+    return { ok: false, error: 'The selected icon is not a valid image.' };
+  }
+
+  try {
+    const icon = nativeImage.createFromDataURL(dataUrl);
+    if (icon.isEmpty()) {
+      return { ok: false, error: 'The selected icon could not be read.' };
+    }
+
+    await fs.writeFile(getCustomAppIconPath(), icon.toPNG());
+    applyAppIcon(icon);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: `The app icon could not be updated: ${err.message}` };
+  }
+});
+
+ipcMain.handle('reset-app-icon', async () => {
+  try {
+    await fs.rm(getCustomAppIconPath(), { force: true });
+    const defaultIcon = getDefaultAppIcon();
+    if (defaultIcon.isEmpty()) {
+      return { ok: false, error: 'The default app icon could not be loaded.' };
+    }
+
+    applyAppIcon(defaultIcon);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: `The default app icon could not be restored: ${err.message}` };
+  }
+});
+
 const createWindow = () => {
   const mainWindow = new BrowserWindow({
     width: 640,
@@ -171,6 +236,7 @@ const createWindow = () => {
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     autoHideMenuBar: process.platform === 'win32',
     backgroundColor: '#151016',
+    ...(process.platform === 'darwin' ? {} : { icon: activeAppIcon }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
     },
@@ -183,16 +249,10 @@ const createWindow = () => {
   }
 };
 
-app.whenReady().then(() => {
-  // The packaged app gets its icon from icon.icns; in dev the dock needs it set explicitly.
-  if (process.platform === 'darwin' && !app.isPackaged) {
-    const dockIcon = nativeImage.createFromPath(
-      path.join(app.getAppPath(), 'src/assets/icons/512x512.png')
-    );
-    if (!dockIcon.isEmpty()) {
-      app.dock.setIcon(dockIcon);
-    }
-  }
+app.whenReady().then(async () => {
+  const savedIcon = await loadSavedAppIcon();
+  const initialIcon = savedIcon || getDefaultAppIcon();
+  applyAppIcon(initialIcon);
 
   createWindow();
 

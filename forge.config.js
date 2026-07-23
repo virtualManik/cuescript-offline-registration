@@ -6,6 +6,8 @@ module.exports = {
     asar: true,
     // Packager appends the platform extension (.icns / .ico) automatically.
     icon: './src/assets/icons/icon',
+    // Keep a stable PNG path available for restoring the runtime Dock/taskbar icon.
+    extraResource: ['./src/assets/icons/512x512.png'],
   },
   rebuildConfig: {},
   makers: [

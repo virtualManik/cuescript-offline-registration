@@ -14,6 +14,9 @@ import {
   Puzzle,
   CalendarClock,
   Mail,
+  Settings,
+  ArrowLeft,
+  Upload,
 } from 'lucide-react';
 import MdiIcon from '@mdi/react';
 import { mdiContentCopy } from '@mdi/js';
@@ -42,6 +45,9 @@ import {
 } from '@/components/ui/card';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const APP_ICON_STORAGE_KEY = 'cuescript.customAppIcon';
+const APP_ICON_NAME_STORAGE_KEY = 'cuescript.customAppIconName';
+const MAX_APP_ICON_SIZE = 2 * 1024 * 1024;
 const DEMO_TRUE_VALUES = new Set(['1', 'true', 'yes', 'demo', 'trial', 'evaluation', 'eval']);
 const DEMO_FALSE_VALUES = new Set([
   '0',
@@ -651,12 +657,124 @@ function FailedLookupCard({ result }) {
   );
 }
 
+function SettingsPage({
+  icon,
+  iconName,
+  hasCustomIcon,
+  iconError,
+  onBack,
+  onIconChange,
+  onResetIcon,
+}) {
+  const iconInputId = React.useId();
+
+  return (
+    <main className="flex-1 px-6 pb-24">
+      <Card>
+        <CardHeader>
+          <CardTitle>Settings</CardTitle>
+          <CardDescription>
+            Personalize the icon shown in this app. Your selection is saved on this computer.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-start gap-4 rounded-lg border p-4">
+            <div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-primary/10">
+              <img src={icon} alt="" className="size-11 object-contain" />
+            </div>
+            <div className="min-w-0 flex-1 space-y-2">
+              <Label htmlFor={iconInputId}>App icon</Label>
+              <div className="flex gap-2">
+                <Input
+                  value={iconName}
+                  readOnly
+                  aria-label="Selected app icon"
+                  className="min-w-0 text-muted-foreground"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={() => document.getElementById(iconInputId)?.click()}
+                >
+                  <Upload />
+                  Change
+                </Button>
+              </div>
+              <input
+                id={iconInputId}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/svg+xml,image/x-icon"
+                className="sr-only"
+                onChange={onIconChange}
+              />
+              <p className="text-xs text-muted-foreground">
+                Choose a PNG, JPG, WebP, SVG, or ICO image up to 2 MB. Square images work best.
+                The Dock or taskbar icon updates immediately.
+              </p>
+              {iconError && (
+                <div className="flex items-start gap-2 text-xs text-destructive" role="alert">
+                  <CircleAlert className="mt-px size-3.5 shrink-0" />
+                  <span>{iconError}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </CardContent>
+        <CardFooter className="justify-between gap-3">
+          <Button type="button" variant="outline" onClick={onBack}>
+            <ArrowLeft />
+            Back
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={!hasCustomIcon}
+            onClick={onResetIcon}
+          >
+            <RotateCcw />
+            Restore default
+          </Button>
+        </CardFooter>
+      </Card>
+    </main>
+  );
+}
+
 export default function App() {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [lookupLoading, setLookupLoading] = React.useState(false);
   const [error, setError] = React.useState(null);
   const [lookupResults, setLookupResults] = React.useState(null);
   const [activeResultIndex, setActiveResultIndex] = React.useState(0);
+  const [page, setPage] = React.useState('registration');
+  const [customIcon, setCustomIcon] = React.useState(() => {
+    try {
+      return localStorage.getItem(APP_ICON_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  });
+  const [customIconName, setCustomIconName] = React.useState(() => {
+    try {
+      return localStorage.getItem(APP_ICON_NAME_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  });
+  const [iconError, setIconError] = React.useState(null);
+
+  React.useEffect(() => {
+    if (!customIcon || typeof window.api?.setAppIcon !== 'function') return;
+
+    window.api.setAppIcon({ dataUrl: customIcon }).then((response) => {
+      if (!response.ok) {
+        setIconError(response.error || 'The Dock or taskbar icon could not be updated.');
+      }
+    }).catch(() => {
+      setIconError('The Dock or taskbar icon could not be updated.');
+    });
+  }, []);
 
   const parsedSearch = React.useMemo(
     () => parseRegistrationSearch(searchQuery),
@@ -702,22 +820,107 @@ export default function App() {
   const successfulLookups = lookupResults?.filter((result) => result.ok).length ?? 0;
   const totalLookups = lookupResults?.length ?? 0;
   const registrationLabel = totalLookups === 1 ? 'registration' : 'registrations';
+  const appIcon = customIcon || logo;
+  const appIconName = customIconName || 'CueScript default icon';
+
+  const handleIconChange = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setIconError(null);
+    if (!file.type.startsWith('image/')) {
+      setIconError('Choose a supported image file.');
+      return;
+    }
+    if (file.size > MAX_APP_ICON_SIZE) {
+      setIconError('The selected image is larger than 2 MB.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      if (typeof reader.result !== 'string') {
+        setIconError('The selected image could not be read.');
+        return;
+      }
+
+      try {
+        if (typeof window.api?.setAppIcon === 'function') {
+          const response = await window.api.setAppIcon({ dataUrl: reader.result });
+          if (!response.ok) {
+            setIconError(response.error || 'The Dock or taskbar icon could not be updated.');
+            return;
+          }
+        }
+
+        localStorage.setItem(APP_ICON_STORAGE_KEY, reader.result);
+        localStorage.setItem(APP_ICON_NAME_STORAGE_KEY, file.name);
+        setCustomIcon(reader.result);
+        setCustomIconName(file.name);
+      } catch {
+        setIconError('The selected image could not be saved on this computer.');
+      }
+    };
+    reader.onerror = () => setIconError('The selected image could not be read.');
+    reader.readAsDataURL(file);
+  };
+
+  const handleResetIcon = async () => {
+    setIconError(null);
+    if (typeof window.api?.resetAppIcon === 'function') {
+      try {
+        const response = await window.api.resetAppIcon();
+        if (!response.ok) {
+          setIconError(response.error || 'The default Dock or taskbar icon could not be restored.');
+          return;
+        }
+      } catch {
+        setIconError('The default Dock or taskbar icon could not be restored.');
+        return;
+      }
+    }
+
+    try {
+      localStorage.removeItem(APP_ICON_STORAGE_KEY);
+      localStorage.removeItem(APP_ICON_NAME_STORAGE_KEY);
+    } catch {
+      // The in-memory setting can still be restored if storage is unavailable.
+    }
+    setCustomIcon(null);
+    setCustomIconName(null);
+  };
 
   return (
     <div className="flex min-h-screen flex-col">
       <header className="titlebar-drag flex items-center gap-3 px-6 pb-4 pt-10">
         <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-          <img src={logo} alt="CueScript" className="size-6" />
+          <img src={appIcon} alt="CueScript" className="size-6 object-contain" />
         </div>
         <div>
-          <h1 className="text-base font-semibold leading-tight">CueScript Offline Registration</h1>
+          <h1 className="text-base font-semibold leading-tight">
+            {page === 'settings' ? 'Settings' : 'CueScript Offline Registration'}
+          </h1>
           <p className="text-sm text-muted-foreground">
-            Look up CueiT registration details and generate .csr files
+            {page === 'settings'
+              ? 'Customize your offline registration app'
+              : 'Look up CueiT registration details and generate .csr files'}
           </p>
         </div>
       </header>
 
-      <main className="flex-1 space-y-4 px-6 pb-8">
+      {page === 'settings' ? (
+        <SettingsPage
+          icon={appIcon}
+          iconName={appIconName}
+          hasCustomIcon={Boolean(customIcon)}
+          iconError={iconError}
+          onBack={() => setPage('registration')}
+          onIconChange={handleIconChange}
+          onResetIcon={handleResetIcon}
+        />
+      ) : (
+      <main className="flex-1 space-y-4 px-6 pb-24">
         {lookupResults === null && (
           <Card>
             <form onSubmit={handleLookup}>
@@ -856,6 +1059,21 @@ export default function App() {
           </>
         )}
       </main>
+      )}
+
+      <Button
+        type="button"
+        variant={page === 'settings' ? 'secondary' : 'outline'}
+        className="fixed bottom-4 right-4 z-30 size-9 rounded-full bg-background p-0 shadow-md"
+        aria-label={page === 'settings' ? 'Close settings' : 'Open settings'}
+        title={page === 'settings' ? 'Close settings' : 'Settings'}
+        aria-pressed={page === 'settings'}
+        onClick={() => setPage((currentPage) => (
+          currentPage === 'settings' ? 'registration' : 'settings'
+        ))}
+      >
+        {page === 'settings' ? <ArrowLeft /> : <Settings />}
+      </Button>
     </div>
   );
 }
