@@ -28,6 +28,11 @@ import {
 } from '@/lib/registration.mjs';
 import { lookupRegistrationSearch } from '@/lib/registration-client.mjs';
 import {
+  calculateExpirationDayDifference,
+  formatExpirationDayDifference,
+  parseCalendarDate,
+} from '@/lib/date.mjs';
+import {
   Card,
   CardHeader,
   CardTitle,
@@ -106,34 +111,8 @@ function detectDemoFromFields(source, fields) {
   return null;
 }
 
-function parseExpirationDate(value) {
-  if (value === undefined || value === null || value === '') return null;
-
-  // JavaScript treats a bare YYYY-MM-DD string as midnight UTC. Formatting that
-  // in a time zone west of UTC displays the previous calendar day. Registration
-  // dates are calendar dates, so keep them in the user's local calendar instead.
-  if (typeof value === 'string') {
-    const match = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})(?:T.*)?$/);
-    if (match) {
-      const [, year, month, day] = match;
-      const date = new Date(Number(year), Number(month) - 1, Number(day));
-      if (
-        date.getFullYear() === Number(year)
-        && date.getMonth() === Number(month) - 1
-        && date.getDate() === Number(day)
-      ) {
-        return date;
-      }
-      return null;
-    }
-  }
-
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
 function formatDate(value) {
-  const date = parseExpirationDate(value);
+  const date = parseCalendarDate(value);
   if (date === null) {
     if (value === undefined || value === null || value === '') return null;
     return { label: 'Invalid expiry date', invalid: true };
@@ -235,7 +214,7 @@ function parseAddons(info) {
 }
 
 function formatRegistrationExpiration(value) {
-  const date = parseExpirationDate(value);
+  const date = parseCalendarDate(value);
   if (date === null && (value === undefined || value === null || value === '')) {
     return { expired: false, label: 'No expiration' };
   }
@@ -308,6 +287,8 @@ function LicenseResultCard({ result }) {
   const serialValid = typeof info.serial === 'string' && info.serial.length === 10;
   const canGenerate = serialValid && emailValid && !generateLoading;
   const expiration = formatRegistrationExpiration(info.regEndDate);
+  const expirationDayDifference = calculateExpirationDayDifference(info.regEndDate);
+  const expirationDayLabel = formatExpirationDayDifference(expirationDayDifference);
   const licenseDemo = detectDemoFromFields(info, LICENSE_DEMO_FIELDS) === true;
   const addons = parseAddons(info);
   const formatAddonsForClipboard = (items) => items.map((addon) => {
@@ -398,6 +379,7 @@ function LicenseResultCard({ result }) {
     `Renewal: ${renewalDate ?? 'No renewal'}`,
     `Addons: ${addonCopyValue || 'None'}`,
     `Expiration: ${expiration?.label ?? '—'}`,
+    `Days to Expiration: ${expirationDayLabel ?? '—'}`,
   ].join('\n');
 
   return (
@@ -514,6 +496,25 @@ function LicenseResultCard({ result }) {
                 >
                   <span className={expiration?.expired ? 'text-destructive' : undefined}>
                     {expiration?.label}
+                  </span>
+                </ResultRow>
+                <ResultRow
+                  icon={CalendarClock}
+                  label="Days to Expiration"
+                  copyValue={expirationDayLabel ?? ''}
+                  copied={copiedKeys.has('expirationDays')}
+                  onCopy={(text) => copyText('expirationDays', text)}
+                >
+                  <span
+                    className={
+                      expirationDayDifference !== null && expirationDayDifference < 0
+                        ? 'text-destructive'
+                        : undefined
+                    }
+                  >
+                    {expirationDayLabel ?? (
+                      <span className="text-muted-foreground">—</span>
+                    )}
                   </span>
                 </ResultRow>
               </div>
